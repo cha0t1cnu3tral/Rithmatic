@@ -1,0 +1,8 @@
+pygame
+numpy
+accessible_output2
+scipy
+soundfile
+librosa
+audioread
+imageio-ffmpeg

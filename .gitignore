@@ -1,0 +1,12 @@
+__pycache__/
+.pytest_cache/
+.venv/
+.cache/
+build/
+dist/
+release/
+*.zip
+*.spec
+player_profile.json
+songs/*
+!songs/.gitkeep
