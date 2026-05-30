@@ -172,12 +172,9 @@ class App:
             for p in songs_dir.iterdir()
             if p.is_file()
             and not self._is_generated_audio_cache(p)
-            and p.suffix.lower() not in CONVERT_ONLY_EXTS
+            and p.suffix.lower() in PLAYABLE_SONG_EXTS
         ]
-        return sorted(
-            paths,
-            key=lambda x: (0 if x.suffix.lower() in PLAYABLE_SONG_EXTS else 1, x.name.lower()),
-        )
+        return sorted(paths, key=lambda x: x.name.lower())
 
     def _is_generated_audio_cache(self, path: Path) -> bool:
         name = path.name.lower()
@@ -653,14 +650,17 @@ class App:
 
         if self.settings.get("auto_skip_intro", True) and analysis.start_offset_s >= 0.75:
             try:
+                skipped_intro_s = analysis.start_offset_s
                 trimmed_playback = trim_song_to_start(
                     analysis_path,
-                    analysis.start_offset_s,
+                    skipped_intro_s,
                     cache_dir=self.converted_songs_dir,
                 )
+                trimmed_analysis = analyze_song(trimmed_playback)
                 analysis_path = trimmed_playback
+                analysis = trimmed_analysis
                 self._speak(
-                    f"Detected non-song intro. Skipping first {analysis.start_offset_s:.1f} seconds."
+                    f"Detected non-song intro. Skipping first {skipped_intro_s:.1f} seconds."
                 )
             except Exception:
                 pass
@@ -1448,12 +1448,33 @@ class App:
         title = self.font_item.render("SETTINGS", True, (255, 255, 255))
         self.screen.blit(title, (90, 84))
 
-        for i, line in enumerate(self.settings_menu.options):
+        row_top = 154
+        row_step = 42
+        visible_count = 9
+        total = len(self.settings_menu.options)
+        start = max(
+            0,
+            min(
+                self.settings_menu.selected_index - (visible_count // 2),
+                max(0, total - visible_count),
+            ),
+        )
+        end = min(total, start + visible_count)
+
+        for row, i in enumerate(range(start, end)):
+            line = self.settings_menu.options[i]
             selected = i == self.settings_menu.selected_index
             color = (255, 255, 255) if selected else (200, 200, 200)
             prefix = ">> " if selected else "   "
             surf = self.font_small.render(f"{prefix}{line}", True, color)
-            self.screen.blit(surf, (90, 170 + i * 60))
+            self.screen.blit(surf, (90, row_top + row * row_step))
+
+        if start > 0:
+            surf = self.font_small.render("^ more", True, (180, 180, 180))
+            self.screen.blit(surf, (WINDOW_SIZE[0] - 210, row_top))
+        if end < total:
+            surf = self.font_small.render("v more", True, (180, 180, 180))
+            self.screen.blit(surf, (WINDOW_SIZE[0] - 210, row_top + (visible_count - 1) * row_step))
 
         hint = self._settings_hint()
         hint_surface = self.font_small.render(hint, True, (220, 220, 220))

@@ -408,7 +408,7 @@ class GameSession:
         return self._speed_multiplier()
 
     def _speed_text(self) -> str:
-        return f"{self._speed_multiplier():.2f}x"
+        return f"{self._timeline_scale:.2f}x"
 
     def _change_speed(self, delta: int) -> None:
         current_chart_time = self._song_time()
@@ -442,8 +442,11 @@ class GameSession:
     def _start_audio(self) -> None:
         self._reset_music_stream()
         self._base_playback_path = self._resolve_playback_path(self.song_path)
-        self._timeline_scale = self._timeline_rate()
-        self._playback_path = self._resolve_rate_playback_path(self._base_playback_path, self._timeline_scale)
+        requested_rate = self._timeline_rate()
+        self._playback_path, self._timeline_scale = self._resolve_rate_playback_path(
+            self._base_playback_path,
+            requested_rate,
+        )
         self._playback_start_chart_time_s = 0.0
         load_error: Exception | None = None
         try:
@@ -455,6 +458,7 @@ class GameSession:
                 forced = convert_song_to_wav(self.song_path, self.song_path.parent / ".converted")
                 pygame.mixer.music.load(forced.as_posix())
                 self._playback_path = forced
+                self._timeline_scale = 1.0
             except Exception as forced_exc:
                 raise pygame.error(
                     f"Game could not load audio file: {self._playback_path}. "
@@ -491,18 +495,21 @@ class GameSession:
         except Exception as exc:
             raise pygame.error(f"Unsupported playback format: {exc}") from exc
 
-    def _resolve_rate_playback_path(self, base_path: Path, rate: float) -> Path:
+    def _resolve_rate_playback_path(self, base_path: Path, rate: float) -> tuple[Path, float]:
         if abs(rate - 1.0) < 1e-4:
-            return base_path
+            return base_path, 1.0
         try:
-            return convert_song_to_rate_wav(base_path, rate, cache_dir=base_path.parent / ".converted")
+            converted = convert_song_to_rate_wav(base_path, rate, cache_dir=base_path.parent / ".converted")
+            return converted, rate
         except Exception:
-            return base_path
+            return base_path, 1.0
 
     def _switch_playback_rate(self, chart_time_s: float, new_rate: float) -> None:
         was_paused = self.paused
-        self._timeline_scale = new_rate
-        self._playback_path = self._resolve_rate_playback_path(self._base_playback_path, new_rate)
+        self._playback_path, self._timeline_scale = self._resolve_rate_playback_path(
+            self._base_playback_path,
+            new_rate,
+        )
         self._playback_start_chart_time_s = max(0.0, float(chart_time_s))
         try:
             pygame.mixer.music.load(self._playback_path.as_posix())
@@ -761,7 +768,7 @@ class GameSession:
         pygame.draw.rect(self.screen, (80, 80, 80), pygame.Rect(40, hit_line_y - 18, w - 80, 36), 1)
 
         now = self._song_time()
-        px_per_s = 260 * self._speed_multiplier()
+        px_per_s = 260 * self._timeline_scale
         lane_index = {lane: i for i, lane in enumerate(self.lanes)}
 
         for note in self.analysis.notes:
