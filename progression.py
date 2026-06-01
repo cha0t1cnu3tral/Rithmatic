@@ -16,6 +16,7 @@ DEFAULT_SETTINGS = {
     "auto_skip_intro": True,
     "reduced_inputs": False,
     "difficulty_level": 5,
+    "reaction_time_s": 1.0,
     "default_start_speed_index": 9,
     "keybinds": {
         "lane_a": "a",
@@ -38,7 +39,33 @@ MIN_START_SPEED_INDEX = 0
 MAX_START_SPEED_INDEX = 15
 MIN_DIFFICULTY_LEVEL = 1
 MAX_DIFFICULTY_LEVEL = 10
+MIN_REACTION_TIME_S = 0.4
+MAX_REACTION_TIME_S = 2.0
 VALID_KEYBIND_ACTIONS = set(DEFAULT_SETTINGS["keybinds"].keys())
+
+ACHIEVEMENT_LABELS = {
+    "first_song": "First Song",
+    "songs_5": "Five Song Set",
+    "songs_20": "Tour Regular",
+    "full_combo": "Full Combo",
+    "perfect_run": "Clean Run",
+    "rhythm_machine": "Rhythm Machine",
+    "score_10000": "Score Crusher",
+    "combo_25": "Combo 25",
+    "combo_50": "Combo 50",
+    "combo_100": "Combo 100",
+    "precision_90": "Precision 90%",
+    "shanra_spotter": "Shanra Spotter",
+    "shanra_hunter": "Shanra Hunter",
+    "timing_master": "Timing Master",
+    "timing_legend": "Timing Legend",
+    "genre_explorer": "Genre Explorer",
+    "genre_collector": "Genre Collector",
+    "tempo_tour": "Tempo Tour",
+    "level_5": "Level 5",
+    "level_10": "Level 10",
+    "level_20": "Level 20",
+}
 
 
 GENRE_KEYWORDS = {
@@ -120,6 +147,9 @@ class PlayerProfile:
                 MIN_DIFFICULTY_LEVEL,
                 min(MAX_DIFFICULTY_LEVEL, int(normalized.get("difficulty_level", DEFAULT_SETTINGS["difficulty_level"]))),
             )
+            normalized["reaction_time_s"] = self._normalize_reaction_time(
+                normalized.get("reaction_time_s", DEFAULT_SETTINGS["reaction_time_s"])
+            )
             normalized["default_start_speed_index"] = max(
                 MIN_START_SPEED_INDEX,
                 min(
@@ -189,6 +219,13 @@ class PlayerProfile:
         except (TypeError, ValueError):
             parsed = float(DEFAULT_SETTINGS["default_song_volume"])
         return max(MIN_SONG_VOLUME, min(MAX_SONG_VOLUME, parsed))
+
+    def _normalize_reaction_time(self, value: object) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            parsed = float(DEFAULT_SETTINGS["reaction_time_s"])
+        return max(MIN_REACTION_TIME_S, min(MAX_REACTION_TIME_S, parsed))
 
     def save(self) -> None:
         self.path.write_text(json.dumps(self.data, indent=2), encoding="utf-8")
@@ -388,6 +425,9 @@ class PlayerProfile:
             MIN_DIFFICULTY_LEVEL,
             min(MAX_DIFFICULTY_LEVEL, int(normalized.get("difficulty_level", DEFAULT_SETTINGS["difficulty_level"]))),
         )
+        normalized["reaction_time_s"] = self._normalize_reaction_time(
+            normalized.get("reaction_time_s", DEFAULT_SETTINGS["reaction_time_s"])
+        )
         normalized["default_start_speed_index"] = max(
             MIN_START_SPEED_INDEX,
             min(
@@ -410,6 +450,7 @@ class PlayerProfile:
         auto_skip_intro: bool | None = None,
         reduced_inputs: bool | None = None,
         difficulty_level: int | None = None,
+        reaction_time_s: float | None = None,
         default_start_speed_index: int | None = None,
         keybinds: dict | None = None,
     ) -> dict:
@@ -436,6 +477,8 @@ class PlayerProfile:
             settings["difficulty_level"] = max(
                 MIN_DIFFICULTY_LEVEL, min(MAX_DIFFICULTY_LEVEL, int(difficulty_level))
             )
+        if reaction_time_s is not None:
+            settings["reaction_time_s"] = self._normalize_reaction_time(reaction_time_s)
         if default_start_speed_index is not None:
             settings["default_start_speed_index"] = max(
                 MIN_START_SPEED_INDEX, min(MAX_START_SPEED_INDEX, int(default_start_speed_index))
@@ -550,21 +593,31 @@ class PlayerProfile:
         lifetime_shanra = int(self.data.get("lifetime_shanra_hits", 0))
         lifetime_perfect = int(self.data.get("lifetime_perfect_hits", 0))
         genres_seen = len(self.data.get("genres_seen", []))
+        bpm_buckets_seen = len(self.data.get("bpm_buckets_seen", []))
 
         def check(condition: bool, aid: str, label: str) -> None:
             if condition and self._unlock_achievement(aid):
                 unlocked.append(label)
 
         check(plays >= 1, "first_song", "First Song")
+        check(plays >= 5, "songs_5", "Five Song Set")
+        check(plays >= 20, "songs_20", "Tour Regular")
         check(total_notes >= 20 and misses == 0, "full_combo", "Full Combo")
+        check(total_notes >= 30 and misses == 0 and accuracy >= 1.0, "perfect_run", "Clean Run")
         check(score >= 5000, "rhythm_machine", "Rhythm Machine")
+        check(score >= 10000, "score_10000", "Score Crusher")
         check(max_combo >= 25, "combo_25", "Combo 25")
         check(max_combo >= 50, "combo_50", "Combo 50")
+        check(max_combo >= 100, "combo_100", "Combo 100")
         check(accuracy >= 0.9 and total_notes >= 30, "precision_90", "Precision 90%")
         check(int(shanra_hits) >= 8, "shanra_spotter", "Shanra Spotter")
         check(lifetime_shanra >= 40, "shanra_hunter", "Shanra Hunter")
         check(lifetime_perfect >= 200, "timing_master", "Timing Master")
+        check(lifetime_perfect >= 500, "timing_legend", "Timing Legend")
         check(genres_seen >= 4, "genre_explorer", "Genre Explorer")
+        check(genres_seen >= 7, "genre_collector", "Genre Collector")
+        check(bpm_buckets_seen >= 4, "tempo_tour", "Tempo Tour")
         check(self.level() >= 5, "level_5", "Level 5")
         check(self.level() >= 10, "level_10", "Level 10")
+        check(self.level() >= 20, "level_20", "Level 20")
         return unlocked

@@ -72,6 +72,12 @@ class GameplayCueBank:
         self._hit_sound = self._load_sound("hit.mp3")
         self._miss_sound = self._load_sound("miss.mp3")
         self._combo_sound = self._load_sound("combo.mp3")
+        if self._hit_sound is None:
+            self._hit_sound = self._make_tone(920.0, 1120.0, 0.055)
+        if self._miss_sound is None:
+            self._miss_sound = self._make_tone(240.0, 105.0, 0.16)
+        if self._combo_sound is None:
+            self._combo_sound = self._make_tone(660.0, 1320.0, 0.13)
 
     def _load_sound(self, filename: str) -> pygame.mixer.Sound | None:
         path = self.assets_root / "sounds" / "gameplay sounds" / filename
@@ -79,6 +85,22 @@ class GameplayCueBank:
             return None
         try:
             return pygame.mixer.Sound(path.as_posix())
+        except pygame.error:
+            return None
+
+    def _make_tone(self, start_hz: float, end_hz: float, duration_s: float) -> pygame.mixer.Sound | None:
+        mixer_init = pygame.mixer.get_init()
+        if mixer_init is None:
+            return None
+        sample_rate, _, channels = mixer_init
+        sample_count = max(1, int(sample_rate * duration_s))
+        frequencies = np.linspace(start_hz, end_hz, sample_count, dtype=np.float64)
+        phase = np.cumsum((2.0 * np.pi * frequencies) / sample_rate)
+        envelope = np.linspace(1.0, 0.0, sample_count, dtype=np.float64)
+        waveform = (np.sin(phase) * envelope * 11000.0).astype(np.int16)
+        samples = np.column_stack([waveform] * channels) if channels > 1 else waveform
+        try:
+            return pygame.sndarray.make_sound(np.ascontiguousarray(samples))
         except pygame.error:
             return None
 
@@ -167,6 +189,7 @@ class GameSession:
         starting_song_volume: float = 1.0,
         reduced_inputs: bool = False,
         difficulty_level: int = 5,
+        reaction_time_s: float = 1.0,
         initial_speed_index: int | None = None,
         keybinds: dict[str, str] | None = None,
     ):
@@ -183,6 +206,7 @@ class GameSession:
         self.speak_letters = bool(speak_letters)
         self.reduced_inputs = bool(reduced_inputs)
         self.difficulty_level = max(1, min(10, int(difficulty_level)))
+        self.reaction_time_s = max(0.4, min(2.0, float(reaction_time_s)))
         self.keybinds = self._normalize_keybinds(keybinds)
 
         self.hit_window = 0.18
@@ -374,7 +398,7 @@ class GameSession:
         self.space_hit_window = float(np.clip(self.hit_window * 0.95, 0.17, 0.26))
         self.perfect_window = float(np.clip(self.hit_window * 0.45, 0.06, 0.11))
         self.good_window = float(np.clip(self.hit_window * 0.78, 0.11, 0.17))
-        self.approach_lead_s = float(np.clip(beat_s * 1.12, 0.74, 1.28))
+        self.approach_lead_s = self.reaction_time_s
         if self.difficulty_level < 5:
             scale = 1.0 + ((5 - self.difficulty_level) * 0.05)
             self.hit_window *= scale

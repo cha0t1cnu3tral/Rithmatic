@@ -8,7 +8,13 @@ import pygame
 from audio_analysis import analyze_song, convert_song_to_wav, trim_song_to_start
 from audio_runtime import AudioRuntime
 from gameplay import DEFAULT_KEYBINDS, SPEED_STEPS, GameSession, GameplayCueBank
-from progression import MAX_CUE_VOLUME, PlayerProfile
+from progression import (
+    ACHIEVEMENT_LABELS,
+    MAX_CUE_VOLUME,
+    MAX_REACTION_TIME_S,
+    MIN_REACTION_TIME_S,
+    PlayerProfile,
+)
 from song_identity import identify_song_identity
 from screenreader import ScreenReader
 from tutorial import TutorialSession
@@ -360,16 +366,15 @@ class App:
     def _achievements_summary_speech(self) -> str:
         unlocked = self.profile.achievements()
         songs_played = len(self.profile.data.get("song_stats", {}))
-        total_achievements = 6
+        total_achievements = len(ACHIEVEMENT_LABELS)
         status = lambda aid: "unlocked" if aid in unlocked else "locked"
+        achievement_statuses = " ".join(
+            f"{label} {status(achievement_id)}."
+            for achievement_id, label in ACHIEVEMENT_LABELS.items()
+        )
         return (
             f"Achievements page. {len(unlocked)} of {total_achievements} unlocked. "
-            f"First Song {status('first_song')}. "
-            f"Full Combo {status('full_combo')}. "
-            f"Rhythm Machine {status('rhythm_machine')}. "
-            f"Precision 90 percent {status('precision_90')}. "
-            f"Shanra Spotter {status('shanra_spotter')}. "
-            f"Shanra Hunter {status('shanra_hunter')}. "
+            f"{achievement_statuses} "
             f"Player level {self.profile.level()}. "
             f"XP {self.profile.xp()} of {self.profile.xp_to_next_level()} to next level. "
             f"Songs with records {songs_played}. "
@@ -438,6 +443,10 @@ class App:
         difficulty_label = str(
             max(MIN_DIFFICULTY_LEVEL, min(MAX_DIFFICULTY_LEVEL, int(self.settings.get("difficulty_level", 5))))
         )
+        reaction_time = max(
+            MIN_REACTION_TIME_S,
+            min(MAX_REACTION_TIME_S, float(self.settings.get("reaction_time_s", 1.0))),
+        )
         music_label = "ON" if self.settings["music_enabled"] else "OFF"
         menu_sfx_label = "ON" if self.settings["menu_sounds_enabled"] else "OFF"
         auto_skip_intro_label = "ON" if self.settings.get("auto_skip_intro", True) else "OFF"
@@ -452,6 +461,7 @@ class App:
             f"Read Letters: {speak_letters_label}",
             f"Reduced Inputs: {reduced_label}",
             f"Difficulty: {difficulty_label}",
+            f"Reaction Time: {reaction_time:.1f} seconds",
             f"Menu Music: {music_label}",
             f"Menu Sounds: {menu_sfx_label}",
             f"Skip Music Video Intro: {auto_skip_intro_label}",
@@ -477,14 +487,16 @@ class App:
         if idx == 6:
             return "Difficulty from 1 to 10. Default is 5. Higher is faster and denser."
         if idx == 7:
-            return "Menu music toggle controls only main-menu background tracks."
+            return "Sets how early incoming-note cues play. Left shorter, right longer."
         if idx == 8:
-            return "Menu sounds toggle controls selection and song-select sound effects."
+            return "Menu music toggle controls only main-menu background tracks."
         if idx == 9:
-            return "Skips spoken or non-song lead-ins in music videos before gameplay starts."
+            return "Menu sounds toggle controls selection and song-select sound effects."
         if idx == 10:
-            return "Sets the starting speed during song countdown. Left slower, right faster."
+            return "Skips spoken or non-song lead-ins in music videos before gameplay starts."
         if idx == 11:
+            return "Sets the starting speed during song countdown. Left slower, right faster."
+        if idx == 12:
             return "Open per-action key mapping for lanes, pause, and speed controls."
         return "Press Enter or Escape to go back."
 
@@ -508,6 +520,7 @@ class App:
             auto_skip_intro=self.settings.get("auto_skip_intro", True),
             reduced_inputs=self.settings["reduced_inputs"],
             difficulty_level=self.settings["difficulty_level"],
+            reaction_time_s=self.settings.get("reaction_time_s", 1.0),
             default_start_speed_index=self.settings["default_start_speed_index"],
             keybinds=self.settings["keybinds"],
         )
@@ -715,6 +728,7 @@ class App:
                 starting_song_volume=self.settings.get("default_song_volume", 0.5),
                 reduced_inputs=self.settings["reduced_inputs"],
                 difficulty_level=self.settings["difficulty_level"],
+                reaction_time_s=self.settings.get("reaction_time_s", 1.0),
                 initial_speed_index=start_speed_index,
                 keybinds=self.settings["keybinds"],
             )
@@ -1162,6 +1176,26 @@ class App:
             self._speak(self.settings_menu.selected)
             return
         if idx == 7:
+            previous = max(
+                MIN_REACTION_TIME_S,
+                min(MAX_REACTION_TIME_S, float(self.settings.get("reaction_time_s", 1.0))),
+            )
+            step = 0.1
+            if event.key == pygame.K_LEFT:
+                updated = max(MIN_REACTION_TIME_S, previous - step)
+            elif event.key == pygame.K_RIGHT:
+                updated = min(MAX_REACTION_TIME_S, previous + step)
+            else:
+                updated = previous + step
+                if updated > MAX_REACTION_TIME_S:
+                    updated = MIN_REACTION_TIME_S
+            self.settings["reaction_time_s"] = round(updated, 1)
+            self._save_settings()
+            self.audio.play_item_selected()
+            self._speak(f"Reaction time {updated:.1f} seconds")
+            self._speak(self.settings_menu.selected)
+            return
+        if idx == 8:
             if event.key == pygame.K_LEFT:
                 self.settings["music_enabled"] = False
             elif event.key == pygame.K_RIGHT:
@@ -1173,7 +1207,7 @@ class App:
             self._speak("Menu music on" if self.settings["music_enabled"] else "Menu music off")
             self._speak(self.settings_menu.selected)
             return
-        if idx == 8:
+        if idx == 9:
             if event.key == pygame.K_LEFT:
                 self.settings["menu_sounds_enabled"] = False
             elif event.key == pygame.K_RIGHT:
@@ -1187,7 +1221,7 @@ class App:
             )
             self._speak(self.settings_menu.selected)
             return
-        if idx == 9:
+        if idx == 10:
             if event.key == pygame.K_LEFT:
                 self.settings["auto_skip_intro"] = False
             elif event.key == pygame.K_RIGHT:
@@ -1203,7 +1237,7 @@ class App:
             )
             self._speak(self.settings_menu.selected)
             return
-        if idx == 10:
+        if idx == 11:
             speed_steps = self._song_speed_steps()
             previous = self._default_song_speed_index()
             if event.key == pygame.K_LEFT:
@@ -1218,14 +1252,14 @@ class App:
             self._speak(f"Default start speed {speed_steps[updated]:.2f}x")
             self._speak(self.settings_menu.selected)
             return
-        if idx == 11:
+        if idx == 12:
             self.state = "KEYBINDS"
             self.waiting_for_keybind_action = None
             self.keybind_menu.options = self._keybind_options()
             self._speak("Keybind settings")
             self._speak(self.keybind_menu.selected)
             return
-        if idx == 12:
+        if idx == 13:
             self.state = "MENU"
             self.audio.start_menu_music()
             self._speak("Main menu")
@@ -1416,26 +1450,25 @@ class App:
         unlocked = self.profile.achievements()
         songs_played = len(self.profile.data.get("song_stats", {}))
         status = lambda aid: "Unlocked" if aid in unlocked else "Locked"
-        lines = [
-            "ACHIEVEMENTS",
-            f"First Song: {status('first_song')}",
-            f"Full Combo: {status('full_combo')}",
-            f"Rhythm Machine (5000+): {status('rhythm_machine')}",
-            f"Precision 90%: {status('precision_90')}",
-            f"Shanra Spotter: {status('shanra_spotter')}",
-            f"Shanra Hunter: {status('shanra_hunter')}",
-            f"Player Level: {self.profile.level()}",
-            f"XP: {self.profile.xp()} / {self.profile.xp_to_next_level()}",
-            f"Songs with records: {songs_played}",
-            f"Last result: {self.last_summary}",
-            f"Last reward: {self.profile.data.get('last_reward', 'None')}",
-            "ESC to return",
-        ]
-        step = 42
+        lines = [f"{label}: {status(aid)}" for aid, label in ACHIEVEMENT_LABELS.items()]
+        header = self.font_item.render(
+            f"ACHIEVEMENTS {len(unlocked)} / {len(ACHIEVEMENT_LABELS)}",
+            True,
+            (255, 255, 255),
+        )
+        self.screen.blit(header, (90, 84))
+        step = 33
         for i, line in enumerate(lines):
-            font = self.font_item if i == 0 else self.font_small
-            surf = font.render(line, True, (255, 255, 255))
-            self.screen.blit(surf, (90, 84 + i * step))
+            column = i // 15
+            row = i % 15
+            surf = self.font_small.render(line, True, (255, 255, 255))
+            self.screen.blit(surf, (70 + column * 510, 145 + row * step))
+        footer = self.font_small.render(
+            f"Level {self.profile.level()}  XP {self.profile.xp()} / {self.profile.xp_to_next_level()}  Songs {songs_played}  ESC to return",
+            True,
+            (220, 220, 220),
+        )
+        self.screen.blit(footer, (70, WINDOW_SIZE[1] - 62))
 
     def _draw_settings(self) -> None:
         self.screen.fill((0, 0, 0))
