@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import sys
 from pathlib import Path
 
@@ -11,8 +12,6 @@ from gameplay import DEFAULT_KEYBINDS, SPEED_STEPS, GameSession, GameplayCueBank
 from progression import (
     ACHIEVEMENT_LABELS,
     MAX_CUE_VOLUME,
-    MAX_REACTION_TIME_S,
-    MIN_REACTION_TIME_S,
     PlayerProfile,
 )
 from song_identity import identify_song_identity
@@ -137,7 +136,7 @@ class App:
 
         self.state = "MENU"
         self.main_menu = MenuState(
-            ["Songs", "Help", "Credits", "Achievements", "Tutorial", "Settings", "Quit"]
+            ["Songs", "Help", "Credits", "Achievements", "Tutorial", "Settings", "Calibration", "Quit"]
         )
         self.song_options, self.song_lookup = self._song_entries()
         self.song_menu = MenuState(self.song_options)
@@ -145,6 +144,9 @@ class App:
         self.settings_menu = MenuState(self._settings_options())
         self.keybind_menu = MenuState(self._keybind_options())
         self.waiting_for_keybind_action: str | None = None
+        self.calibration_cue_due_ms = 0
+        self.calibration_cue_started_ms: int | None = None
+        self.calibration_status = "Press Enter to start calibration."
         self.session: GameSession | None = None
         self.tutorial: TutorialSession | None = None
         self.current_song_name = ""
@@ -443,10 +445,6 @@ class App:
         difficulty_label = str(
             max(MIN_DIFFICULTY_LEVEL, min(MAX_DIFFICULTY_LEVEL, int(self.settings.get("difficulty_level", 5))))
         )
-        reaction_time = max(
-            MIN_REACTION_TIME_S,
-            min(MAX_REACTION_TIME_S, float(self.settings.get("reaction_time_s", 1.0))),
-        )
         music_label = "ON" if self.settings["music_enabled"] else "OFF"
         menu_sfx_label = "ON" if self.settings["menu_sounds_enabled"] else "OFF"
         auto_skip_intro_label = "ON" if self.settings.get("auto_skip_intro", True) else "OFF"
@@ -461,7 +459,6 @@ class App:
             f"Read Letters: {speak_letters_label}",
             f"Reduced Inputs: {reduced_label}",
             f"Difficulty: {difficulty_label}",
-            f"Reaction Time: {reaction_time:.1f} seconds",
             f"Menu Music: {music_label}",
             f"Menu Sounds: {menu_sfx_label}",
             f"Skip Music Video Intro: {auto_skip_intro_label}",
@@ -487,16 +484,14 @@ class App:
         if idx == 6:
             return "Difficulty from 1 to 10. Default is 5. Higher is faster and denser."
         if idx == 7:
-            return "Sets how early incoming-note cues play. Left shorter, right longer."
-        if idx == 8:
             return "Menu music toggle controls only main-menu background tracks."
-        if idx == 9:
+        if idx == 8:
             return "Menu sounds toggle controls selection and song-select sound effects."
-        if idx == 10:
+        if idx == 9:
             return "Skips spoken or non-song lead-ins in music videos before gameplay starts."
-        if idx == 11:
+        if idx == 10:
             return "Sets the starting speed during song countdown. Left slower, right faster."
-        if idx == 12:
+        if idx == 11:
             return "Open per-action key mapping for lanes, pause, and speed controls."
         return "Press Enter or Escape to go back."
 
@@ -520,7 +515,7 @@ class App:
             auto_skip_intro=self.settings.get("auto_skip_intro", True),
             reduced_inputs=self.settings["reduced_inputs"],
             difficulty_level=self.settings["difficulty_level"],
-            reaction_time_s=self.settings.get("reaction_time_s", 1.0),
+            input_latency_s=self.settings.get("input_latency_s", 0.0),
             default_start_speed_index=self.settings["default_start_speed_index"],
             keybinds=self.settings["keybinds"],
         )
@@ -728,7 +723,7 @@ class App:
                 starting_song_volume=self.settings.get("default_song_volume", 0.5),
                 reduced_inputs=self.settings["reduced_inputs"],
                 difficulty_level=self.settings["difficulty_level"],
-                reaction_time_s=self.settings.get("reaction_time_s", 1.0),
+                input_latency_s=self.settings.get("input_latency_s", 0.0),
                 initial_speed_index=start_speed_index,
                 keybinds=self.settings["keybinds"],
             )
@@ -853,9 +848,69 @@ class App:
             self._speak(self.settings_menu.selected)
             self._speak(self._settings_hint())
             return
+        if option == "Calibration":
+            self._open_calibration()
+            return
         if option == "Quit":
             pygame.quit()
             sys.exit(0)
+
+    def _open_calibration(self) -> None:
+        self.audio.stop_menu_music(fade_ms=350)
+        self.state = "CALIBRATION"
+        self.calibration_cue_due_ms = 0
+        self.calibration_cue_started_ms = None
+        self.calibration_status = "Press Enter to start calibration."
+        self._speak(
+            "Latency calibration. Press Enter to begin. "
+            "After the drum sound, press Space as quickly as possible."
+        )
+
+    def _begin_calibration_trial(self) -> None:
+        self.calibration_cue_started_ms = None
+        self.calibration_cue_due_ms = pygame.time.get_ticks() + random.randint(650, 1100)
+        self.calibration_status = "Get ready. Wait for the drum sound."
+        self._speak("Get ready. Wait for the drum sound.")
+
+    def _update_calibration(self) -> None:
+        if self.calibration_cue_due_ms <= 0 or self.calibration_cue_started_ms is not None:
+            return
+        now_ms = pygame.time.get_ticks()
+        if now_ms < self.calibration_cue_due_ms:
+            return
+        self.calibration_cue_due_ms = 0
+        self.calibration_cue_started_ms = now_ms
+        self.calibration_status = "Drum played. Press Space now."
+        self.help_sound_cues.play_lane("SPACE", volume=0.95)
+
+    def _handle_calibration_input(self, event: pygame.event.Event) -> None:
+        if event.type != pygame.KEYDOWN:
+            return
+        if event.key == pygame.K_ESCAPE:
+            self.state = "MENU"
+            self.audio.start_menu_music()
+            self._speak("Main menu")
+            return
+        if event.key == pygame.K_RETURN:
+            self._begin_calibration_trial()
+            return
+        if event.key != pygame.K_SPACE:
+            return
+        if self.calibration_cue_started_ms is None:
+            self.calibration_cue_due_ms = 0
+            self.calibration_status = "Too soon. Press Enter to try again."
+            self._speak("Too soon. Press Enter to try again.")
+            return
+        latency_s = max(0.0, (pygame.time.get_ticks() - self.calibration_cue_started_ms) / 1000.0)
+        calibrated = self.profile.record_latency_calibration(latency_s)
+        self.settings = self.profile.settings()
+        self.calibration_cue_started_ms = None
+        latency_ms = int(round(calibrated * 1000.0))
+        self.calibration_status = (
+            f"Calibrated input latency: {latency_ms} milliseconds. "
+            "Press Enter to recalibrate or Escape to return."
+        )
+        self._speak(self.calibration_status)
 
     def _handle_songs_input(self, event: pygame.event.Event) -> None:
         if event.type == pygame.KEYDOWN:
@@ -1176,26 +1231,6 @@ class App:
             self._speak(self.settings_menu.selected)
             return
         if idx == 7:
-            previous = max(
-                MIN_REACTION_TIME_S,
-                min(MAX_REACTION_TIME_S, float(self.settings.get("reaction_time_s", 1.0))),
-            )
-            step = 0.1
-            if event.key == pygame.K_LEFT:
-                updated = max(MIN_REACTION_TIME_S, previous - step)
-            elif event.key == pygame.K_RIGHT:
-                updated = min(MAX_REACTION_TIME_S, previous + step)
-            else:
-                updated = previous + step
-                if updated > MAX_REACTION_TIME_S:
-                    updated = MIN_REACTION_TIME_S
-            self.settings["reaction_time_s"] = round(updated, 1)
-            self._save_settings()
-            self.audio.play_item_selected()
-            self._speak(f"Reaction time {updated:.1f} seconds")
-            self._speak(self.settings_menu.selected)
-            return
-        if idx == 8:
             if event.key == pygame.K_LEFT:
                 self.settings["music_enabled"] = False
             elif event.key == pygame.K_RIGHT:
@@ -1207,7 +1242,7 @@ class App:
             self._speak("Menu music on" if self.settings["music_enabled"] else "Menu music off")
             self._speak(self.settings_menu.selected)
             return
-        if idx == 9:
+        if idx == 8:
             if event.key == pygame.K_LEFT:
                 self.settings["menu_sounds_enabled"] = False
             elif event.key == pygame.K_RIGHT:
@@ -1221,7 +1256,7 @@ class App:
             )
             self._speak(self.settings_menu.selected)
             return
-        if idx == 10:
+        if idx == 9:
             if event.key == pygame.K_LEFT:
                 self.settings["auto_skip_intro"] = False
             elif event.key == pygame.K_RIGHT:
@@ -1237,7 +1272,7 @@ class App:
             )
             self._speak(self.settings_menu.selected)
             return
-        if idx == 11:
+        if idx == 10:
             speed_steps = self._song_speed_steps()
             previous = self._default_song_speed_index()
             if event.key == pygame.K_LEFT:
@@ -1252,14 +1287,14 @@ class App:
             self._speak(f"Default start speed {speed_steps[updated]:.2f}x")
             self._speak(self.settings_menu.selected)
             return
-        if idx == 12:
+        if idx == 11:
             self.state = "KEYBINDS"
             self.waiting_for_keybind_action = None
             self.keybind_menu.options = self._keybind_options()
             self._speak("Keybind settings")
             self._speak(self.keybind_menu.selected)
             return
-        if idx == 13:
+        if idx == 12:
             self.state = "MENU"
             self.audio.start_menu_music()
             self._speak("Main menu")
@@ -1347,6 +1382,8 @@ class App:
             self._handle_tutorial_input(event)
         elif self.state == "HELP_SOUNDS":
             self._handle_help_sounds_input(event)
+        elif self.state == "CALIBRATION":
+            self._handle_calibration_input(event)
         elif self.state == "ACHIEVEMENTS":
             self._handle_achievements_input(event)
         elif self.state in {"CREDITS", "ACHIEVEMENTS"}:
@@ -1443,6 +1480,23 @@ class App:
             font = self.font_item if i == 0 else self.font_small
             surf = font.render(line, True, (255, 255, 255))
             self.screen.blit(surf, (90, 84 + i * 70))
+
+    def _draw_calibration(self) -> None:
+        self.screen.fill((0, 0, 0))
+        pygame.draw.rect(self.screen, (255, 255, 255), pygame.Rect(50, 48, WINDOW_SIZE[0] - 100, WINDOW_SIZE[1] - 96), 2)
+        latency_ms = int(round(float(self.settings.get("input_latency_s", 0.0)) * 1000.0))
+        lines = [
+            "LATENCY CALIBRATION",
+            "Press Enter to start. Wait for the drum sound.",
+            "Press Space as quickly as possible after the drum.",
+            self.calibration_status,
+            f"Stored input latency: {latency_ms} milliseconds",
+            "ESC: Back to Main Menu",
+        ]
+        for i, line in enumerate(lines):
+            font = self.font_item if i == 0 else self.font_small
+            surf = font.render(line, True, (255, 255, 255))
+            self.screen.blit(surf, (90, 108 + i * 74))
 
     def _draw_achievements(self) -> None:
         self.screen.fill((0, 0, 0))
@@ -1558,6 +1612,8 @@ class App:
                     self._dispatch_state_event(mapped_event)
 
             self.audio.update()
+            if self.state == "CALIBRATION":
+                self._update_calibration()
 
             if self.state == "MENU":
                 self.main_rects = draw_centered_menu(
@@ -1583,6 +1639,8 @@ class App:
                 self._draw_settings()
             elif self.state == "KEYBINDS":
                 self._draw_keybinds()
+            elif self.state == "CALIBRATION":
+                self._draw_calibration()
             elif self.state == "CREDITS":
                 self._draw_credits()
             elif self.state == "ACHIEVEMENTS":

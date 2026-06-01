@@ -27,6 +27,7 @@ MIN_SONG_VOLUME = 0.0
 SONG_VOLUME_STEP = 0.05
 CUE_VOLUME_STEP = 0.05
 SIMULTANEOUS_TOLERANCE_S = 0.014
+APPROACH_CUE_LEAD_S = 0.08
 
 
 @dataclass
@@ -189,7 +190,7 @@ class GameSession:
         starting_song_volume: float = 1.0,
         reduced_inputs: bool = False,
         difficulty_level: int = 5,
-        reaction_time_s: float = 1.0,
+        input_latency_s: float = 0.0,
         initial_speed_index: int | None = None,
         keybinds: dict[str, str] | None = None,
     ):
@@ -206,7 +207,7 @@ class GameSession:
         self.speak_letters = bool(speak_letters)
         self.reduced_inputs = bool(reduced_inputs)
         self.difficulty_level = max(1, min(10, int(difficulty_level)))
-        self.reaction_time_s = max(0.4, min(2.0, float(reaction_time_s)))
+        self.input_latency_s = max(0.0, min(0.75, float(input_latency_s)))
         self.keybinds = self._normalize_keybinds(keybinds)
 
         self.hit_window = 0.18
@@ -393,12 +394,12 @@ class GameSession:
 
     def _configure_tempo_windows(self) -> None:
         beat_s = 60.0 / max(1e-6, self.analysis.bpm)
-        # Keep timing forgiving on slow songs and still playable on denser songs.
-        self.hit_window = float(np.clip(beat_s * 0.31, 0.18, 0.29))
-        self.space_hit_window = float(np.clip(self.hit_window * 0.95, 0.17, 0.26))
-        self.perfect_window = float(np.clip(self.hit_window * 0.45, 0.06, 0.11))
-        self.good_window = float(np.clip(self.hit_window * 0.78, 0.11, 0.17))
-        self.approach_lead_s = self.reaction_time_s
+        # Calibration absorbs input delay, so hits can require precise timing.
+        self.hit_window = float(np.clip(beat_s * 0.10, 0.065, 0.10))
+        self.space_hit_window = float(np.clip(self.hit_window * 0.95, 0.06, 0.095))
+        self.perfect_window = float(np.clip(self.hit_window * 0.34, 0.02, 0.035))
+        self.good_window = float(np.clip(self.hit_window * 0.68, 0.04, 0.065))
+        self.approach_lead_s = APPROACH_CUE_LEAD_S
         if self.difficulty_level < 5:
             scale = 1.0 + ((5 - self.difficulty_level) * 0.05)
             self.hit_window *= scale
@@ -613,7 +614,7 @@ class GameSession:
         self.announce(f"Cue volume {int(round(updated * 100.0))} percent")
 
     def _judge_lane_hit(self, lane: str) -> None:
-        now = self._song_time()
+        now = max(0.0, self._song_time() - self.input_latency_s)
         lane_window = self.space_hit_window if lane == "SPACE" else self.hit_window
         best: NoteEvent | None = None
         best_delta = lane_window + 1.0
