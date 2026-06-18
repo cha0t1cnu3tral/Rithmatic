@@ -667,22 +667,7 @@ class App:
                 self._speak(f"Analysis failed: {exc}")
                 return
 
-        if self.settings.get("auto_skip_intro", True) and analysis.start_offset_s >= 0.75:
-            try:
-                skipped_intro_s = analysis.start_offset_s
-                trimmed_playback = trim_song_to_start(
-                    analysis_path,
-                    skipped_intro_s,
-                    cache_dir=self.converted_songs_dir,
-                )
-                trimmed_analysis = analyze_song(trimmed_playback)
-                analysis_path = trimmed_playback
-                analysis = trimmed_analysis
-                self._speak(
-                    f"Detected non-song intro. Skipping first {skipped_intro_s:.1f} seconds."
-                )
-            except Exception:
-                pass
+        analysis_path = self._align_playback_to_analysis(analysis_path, analysis)
 
         identity = identify_song_identity(
             song_name=selected_name,
@@ -746,6 +731,32 @@ class App:
             return
         self.current_song_name = selected_name
         self.state = "GAME"
+
+    def _align_playback_to_analysis(self, analysis_path: Path, analysis) -> Path:
+        start_offset_s = float(getattr(analysis, "start_offset_s", 0.0) or 0.0)
+        if start_offset_s < 0.12:
+            return analysis_path
+
+        if self.settings.get("auto_skip_intro", True):
+            try:
+                trimmed_playback = trim_song_to_start(
+                    analysis_path,
+                    start_offset_s,
+                    cache_dir=self.converted_songs_dir,
+                )
+                if start_offset_s >= 0.75:
+                    self._speak(
+                        f"Detected non-song intro. Skipping first {start_offset_s:.1f} seconds."
+                    )
+                return trimmed_playback
+            except Exception:
+                pass
+
+        for note in getattr(analysis, "notes", []):
+            note.time_s += start_offset_s
+        analysis.duration_s += start_offset_s
+        analysis.start_offset_s = 0.0
+        return analysis_path
 
     def _start_tutorial(self) -> None:
         self.audio.stop_menu_music(fade_ms=350)

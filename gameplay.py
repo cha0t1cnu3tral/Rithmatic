@@ -27,7 +27,7 @@ MIN_SONG_VOLUME = 0.0
 SONG_VOLUME_STEP = 0.05
 CUE_VOLUME_STEP = 0.05
 SIMULTANEOUS_TOLERANCE_S = 0.014
-APPROACH_CUE_LEAD_S = 0.08
+HIT_CUE_LEAD_S = 0.09
 
 
 @dataclass
@@ -73,12 +73,6 @@ class GameplayCueBank:
         self._hit_sound = self._load_sound("hit.mp3")
         self._miss_sound = self._load_sound("miss.mp3")
         self._combo_sound = self._load_sound("combo.mp3")
-        if self._hit_sound is None:
-            self._hit_sound = self._make_tone(920.0, 1120.0, 0.055)
-        if self._miss_sound is None:
-            self._miss_sound = self._make_tone(240.0, 105.0, 0.16)
-        if self._combo_sound is None:
-            self._combo_sound = self._make_tone(660.0, 1320.0, 0.13)
 
     def _load_sound(self, filename: str) -> pygame.mixer.Sound | None:
         path = self.assets_root / "sounds" / "gameplay sounds" / filename
@@ -86,22 +80,6 @@ class GameplayCueBank:
             return None
         try:
             return pygame.mixer.Sound(path.as_posix())
-        except pygame.error:
-            return None
-
-    def _make_tone(self, start_hz: float, end_hz: float, duration_s: float) -> pygame.mixer.Sound | None:
-        mixer_init = pygame.mixer.get_init()
-        if mixer_init is None:
-            return None
-        sample_rate, _, channels = mixer_init
-        sample_count = max(1, int(sample_rate * duration_s))
-        frequencies = np.linspace(start_hz, end_hz, sample_count, dtype=np.float64)
-        phase = np.cumsum((2.0 * np.pi * frequencies) / sample_rate)
-        envelope = np.linspace(1.0, 0.0, sample_count, dtype=np.float64)
-        waveform = (np.sin(phase) * envelope * 11000.0).astype(np.int16)
-        samples = np.column_stack([waveform] * channels) if channels > 1 else waveform
-        try:
-            return pygame.sndarray.make_sound(np.ascontiguousarray(samples))
         except pygame.error:
             return None
 
@@ -216,7 +194,6 @@ class GameSession:
         self.space_hit_window = 0.15
         self.perfect_window = 0.07
         self.good_window = 0.12
-        self.approach_lead_s = 0.62
         self.speed_steps = list(SPEED_STEPS)
         self.speed_index = self.speed_steps.index(1.0)
         if initial_speed_index is not None:
@@ -351,12 +328,17 @@ class GameSession:
             note.lane = self._map_lane_for_mode(note.lane)
             note.hit = False
             note.judged = False
-            note.approach_cued = False
+            note.hit_cued = False
 
     def _rithm_notes_from_analysis(self) -> list[NoteEvent]:
         beat_s = 60.0 / max(1e-6, self.analysis.bpm)
-        density_scale = 0.28 if self.difficulty_level <= 3 else 0.22 if self.difficulty_level <= 6 else 0.16
-        min_gap_s = float(np.clip(beat_s * density_scale, 0.055, 0.16))
+        if self.difficulty_level <= 3:
+            density_scale = 0.92
+        elif self.difficulty_level <= 6:
+            density_scale = 0.68
+        else:
+            density_scale = 0.5
+        min_gap_s = max(0.22, min(0.55, beat_s * density_scale))
         source = sorted(self.analysis.notes, key=lambda note: note.time_s)
         if not source:
             return []
@@ -378,7 +360,7 @@ class GameSession:
             note.is_drum = True
             note.hit = False
             note.judged = False
-            note.approach_cued = False
+            note.hit_cued = False
         return rhythm
 
     def _difficulty_note_keep_ratio(self) -> float:
@@ -419,17 +401,6 @@ class GameSession:
             return 1.0 + (offset * 0.07)
         return max(0.72, 1.0 + (offset * 0.05))
 
-    def _approach_cue_stride(self) -> int:
-        if self.difficulty_level <= 1:
-            return 5
-        if self.difficulty_level == 2:
-            return 4
-        if self.difficulty_level in {3, 4}:
-            return 3
-        if self.difficulty_level in {5, 6}:
-            return 2
-        return 1
-
     def _visual_cues_enabled(self) -> bool:
         return self.difficulty_level >= 3
 
@@ -438,20 +409,19 @@ class GameSession:
 
     def _configure_tempo_windows(self) -> None:
         beat_s = 60.0 / max(1e-6, self.analysis.bpm)
-        # Calibration absorbs input delay, so hits can require precise timing.
-        self.hit_window = float(np.clip(beat_s * 0.10, 0.065, 0.10))
-        self.space_hit_window = float(np.clip(self.hit_window * 0.95, 0.06, 0.095))
-        self.perfect_window = float(np.clip(self.hit_window * 0.34, 0.02, 0.035))
-        self.good_window = float(np.clip(self.hit_window * 0.68, 0.04, 0.065))
-        self.approach_lead_s = APPROACH_CUE_LEAD_S
+        # Audio-first play needs enough room for human reaction to the press-now cue.
+        self.hit_window = float(np.clip(beat_s * 0.24, 0.15, 0.24))
+        self.space_hit_window = float(np.clip(beat_s * 0.26, 0.16, 0.26))
+        self.perfect_window = float(np.clip(self.hit_window * 0.38, 0.055, 0.085))
+        self.good_window = float(np.clip(self.hit_window * 0.72, 0.105, 0.17))
         if self.difficulty_level < 5:
-            scale = 1.0 + ((5 - self.difficulty_level) * 0.05)
+            scale = 1.0 + ((5 - self.difficulty_level) * 0.09)
             self.hit_window *= scale
             self.space_hit_window *= scale
             self.perfect_window *= scale
             self.good_window *= scale
         elif self.difficulty_level > 5:
-            scale = max(0.78, 1.0 - ((self.difficulty_level - 5) * 0.04))
+            scale = max(0.72, 1.0 - ((self.difficulty_level - 5) * 0.045))
             self.hit_window *= scale
             self.space_hit_window *= scale
             self.perfect_window *= scale
@@ -668,11 +638,11 @@ class GameSession:
         for note in self.analysis.notes:
             if note.judged or note.lane != lane:
                 continue
+            signed_delta = note.time_s - now
             if abs(note.time_s - now) > lane_window:
                 continue
             delta = abs(note.time_s - now)
             if lane == "SPACE":
-                signed_delta = note.time_s - now
                 if signed_delta < -0.06:
                     delta += 0.008
             if delta < best_delta:
@@ -802,16 +772,12 @@ class GameSession:
             return True
         if not self.paused:
             now = self._song_time()
-            stride = self._approach_cue_stride()
-            for idx, note in enumerate(self.analysis.notes):
+            for note in self.analysis.notes:
                 if note.judged:
                     continue
-                if (not note.approach_cued) and (0.0 <= (note.time_s - now) <= self.approach_lead_s):
-                    note.approach_cued = True
-                    if idx % stride == 0:
-                        self.cues.play_lane(note.lane, volume=0.45)
-                    if self._spoken_lane_enabled() and idx % stride == 0:
-                        self.announce_lane(self._lane_speech_text(note.lane))
+                if (not note.hit_cued) and (0.0 <= (note.time_s - now) <= HIT_CUE_LEAD_S):
+                    note.hit_cued = True
+                    self.cues.play_lane(note.lane, volume=0.72)
                 miss_window = self.space_hit_window if note.lane == "SPACE" else self.hit_window
                 if now - note.time_s > miss_window:
                     missed_cluster = self._simultaneous_cluster(note)

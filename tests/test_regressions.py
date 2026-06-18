@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pygame
 
 from audio_analysis import NoteEvent
-from gameplay import APPROACH_CUE_LEAD_S, GameSession
+from gameplay import HIT_CUE_LEAD_S, GameSession, GameplayCueBank
 from main import App
 from progression import ACHIEVEMENT_LABELS, PlayerProfile
 
@@ -35,6 +35,45 @@ class SongDiscoveryTests(unittest.TestCase):
                 [path.name for path in app._song_paths()],
                 ["clip.wav", "track.mp3"],
             )
+
+
+class PlaybackAnalysisAlignmentTests(unittest.TestCase):
+    def test_small_detected_start_offset_trims_playback_to_match_analysis(self) -> None:
+        app = App.__new__(App)
+        app.settings = {"auto_skip_intro": True}
+        app.converted_songs_dir = Path("converted")
+        spoken: list[str] = []
+        app._speak = spoken.append
+        analysis = SimpleNamespace(
+            start_offset_s=0.32,
+            duration_s=2.0,
+            notes=[NoteEvent(time_s=0.5, lane="A")],
+        )
+
+        with patch("main.trim_song_to_start", return_value=Path("song.start000320.auto.wav")) as trim:
+            playback_path = app._align_playback_to_analysis(Path("song.wav"), analysis)
+
+        self.assertEqual(playback_path, Path("song.start000320.auto.wav"))
+        trim.assert_called_once_with(Path("song.wav"), 0.32, cache_dir=Path("converted"))
+        self.assertEqual(analysis.notes[0].time_s, 0.5)
+        self.assertEqual(spoken, [])
+
+    def test_disabled_intro_skip_restores_chart_to_original_playback_timeline(self) -> None:
+        app = App.__new__(App)
+        app.settings = {"auto_skip_intro": False}
+        app.converted_songs_dir = Path("converted")
+        analysis = SimpleNamespace(
+            start_offset_s=0.32,
+            duration_s=2.0,
+            notes=[NoteEvent(time_s=0.5, lane="A"), NoteEvent(time_s=1.0, lane="SPACE")],
+        )
+
+        playback_path = app._align_playback_to_analysis(Path("song.wav"), analysis)
+
+        self.assertEqual(playback_path, Path("song.wav"))
+        self.assertEqual([round(note.time_s, 2) for note in analysis.notes], [0.82, 1.32])
+        self.assertEqual(analysis.duration_s, 2.32)
+        self.assertEqual(analysis.start_offset_s, 0.0)
 
 
 class CalibrationFlowTests(unittest.TestCase):
@@ -83,15 +122,19 @@ class PlaybackRateTests(unittest.TestCase):
         self.assertEqual(playback_path, base_path)
         self.assertEqual(timeline_rate, 1.0)
 
-    def test_approach_cue_lead_is_near_instant(self) -> None:
+    def test_audio_first_timing_windows_are_playable_from_cues(self) -> None:
         session = GameSession.__new__(GameSession)
         session.analysis = SimpleNamespace(bpm=120.0)
         session.difficulty_level = 5
 
         session._configure_tempo_windows()
 
-        self.assertEqual(session.approach_lead_s, APPROACH_CUE_LEAD_S)
-        self.assertLessEqual(session.hit_window, 0.1)
+        self.assertGreaterEqual(session.hit_window, 0.15)
+        self.assertGreaterEqual(session.space_hit_window, 0.16)
+        self.assertLess(HIT_CUE_LEAD_S, session.hit_window)
+
+    def test_gameplay_cues_do_not_generate_fallback_tones(self) -> None:
+        self.assertFalse(hasattr(GameplayCueBank, "_make_tone"))
 
     def test_calibrated_latency_is_subtracted_when_judging_hits(self) -> None:
         session = GameSession.__new__(GameSession)
@@ -121,7 +164,7 @@ class PlaybackRateTests(unittest.TestCase):
         self.assertTrue(note.hit)
         self.assertEqual(session.hits, 1)
 
-    def test_rithm_mode_builds_drum_only_timing_chart(self) -> None:
+    def test_rithm_mode_builds_playable_drum_only_timing_chart(self) -> None:
         session = GameSession.__new__(GameSession)
         session.analysis = SimpleNamespace(
             bpm=120.0,
@@ -136,9 +179,9 @@ class PlaybackRateTests(unittest.TestCase):
 
         rhythm_notes = session._rithm_notes_from_analysis()
 
-        self.assertEqual([note.lane for note in rhythm_notes], ["SPACE", "SPACE", "SPACE"])
+        self.assertEqual([note.lane for note in rhythm_notes], ["SPACE", "SPACE"])
         self.assertTrue(all(note.is_drum for note in rhythm_notes))
-        self.assertEqual([round(note.time_s, 2) for note in rhythm_notes], [0.0, 0.25, 0.5])
+        self.assertEqual([round(note.time_s, 2) for note in rhythm_notes], [0.0, 0.5])
 
     def test_rithm_mode_any_key_uses_calibrated_drum_hit(self) -> None:
         session = GameSession.__new__(GameSession)
@@ -226,6 +269,34 @@ class PlayerProfileTests(unittest.TestCase):
             self.assertIn("Score Crusher", reward.unlocked_achievements)
             self.assertIn("Combo 100", reward.unlocked_achievements)
             self.assertIn("Clean Run", reward.unlocked_achievements)
+
+    def test_rating_keeps_nonzero_credit_for_rough_rithm_runs_with_hits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = PlayerProfile(Path(tmp) / "profile.json")
+
+            reward = profile.apply_song_result(
+                song_name="rough rithm song",
+                score=250,
+                hits=6,
+                misses=94,
+                bpm=120.0,
+                ok_hits=6,
+                max_combo=2,
+                onset_density=4.0,
+                failed=True,
+            )
+            all_miss_reward = profile.apply_song_result(
+                song_name="all miss rithm song",
+                score=0,
+                hits=0,
+                misses=100,
+                bpm=120.0,
+                onset_density=4.0,
+                failed=True,
+            )
+
+            self.assertGreater(reward.rating_score, 0.0)
+            self.assertEqual(all_miss_reward.rating_score, 0.0)
 
 
 if __name__ == "__main__":

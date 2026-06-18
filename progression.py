@@ -564,6 +564,9 @@ class PlayerProfile:
         )
         penalty = miss_ratio * 28.0
         rating = max(0.0, min(100.0, (base - penalty) * difficulty_factor))
+        if accuracy > 0.0:
+            hit_floor = ((accuracy * 100.0 * 0.32) + (combo_ratio * 100.0 * 0.08)) * difficulty_factor
+            rating = max(rating, min(100.0, hit_floor))
         return rating
 
     def _stars_from_rating(self, rating_score: float) -> int:

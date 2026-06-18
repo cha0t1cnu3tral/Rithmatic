@@ -43,7 +43,7 @@ class NoteEvent:
     is_drum: bool = False
     hit: bool = False
     judged: bool = False
-    approach_cued: bool = False
+    hit_cued: bool = False
 
 
 @dataclass
