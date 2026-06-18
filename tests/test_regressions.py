@@ -164,6 +164,50 @@ class PlaybackRateTests(unittest.TestCase):
         self.assertTrue(note.hit)
         self.assertEqual(session.hits, 1)
 
+    def test_calibrated_latency_delays_auto_miss_until_hit_can_arrive(self) -> None:
+        session = GameSession.__new__(GameSession)
+        note = NoteEvent(time_s=1.0, lane="A")
+        session.analysis = SimpleNamespace(notes=[note], duration_s=10.0)
+        session.input_latency_s = 0.4
+        session.hit_window = 0.1
+        session.space_hit_window = 0.1
+        session.perfect_window = 0.03
+        session.good_window = 0.06
+        session.score = 0
+        session.hits = 0
+        session.misses = 0
+        session.combo = 0
+        session.max_combo = 0
+        session.perfect_hits = 0
+        session.good_hits = 0
+        session.ok_hits = 0
+        session.health = 100.0
+        session.health_max = 150.0
+        session.fail_hit_recovery = 3.2
+        session.fail_miss_penalty = 1.9
+        session.paused = False
+        session.finished = False
+        session.failed = False
+        session.cues = SimpleNamespace(
+            play_lane=lambda lane, volume=1.0: None,
+            play_hit=lambda lane: None,
+            play_miss=lambda: None,
+            play_combo=lambda: None,
+        )
+        current_time = [note.time_s - HIT_CUE_LEAD_S + session.input_latency_s - 0.01]
+        session._song_time = lambda: current_time[0]
+
+        session.update()
+
+        self.assertFalse(note.judged)
+        self.assertEqual(session.misses, 0)
+
+        current_time[0] = note.time_s - HIT_CUE_LEAD_S + session.input_latency_s
+        session._judge_lane_hit("A")
+
+        self.assertTrue(note.hit)
+        self.assertEqual(session.hits, 1)
+
     def test_rithm_mode_builds_playable_drum_only_timing_chart(self) -> None:
         session = GameSession.__new__(GameSession)
         session.analysis = SimpleNamespace(

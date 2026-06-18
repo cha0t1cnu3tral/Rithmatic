@@ -630,8 +630,11 @@ class GameSession:
         self.cues.set_master_volume(updated)
         self.announce(f"Cue volume {int(round(updated * 100.0))} percent")
 
+    def _judgment_time(self) -> float:
+        return max(0.0, self._song_time() - self.input_latency_s)
+
     def _judge_lane_hit(self, lane: str) -> None:
-        now = max(0.0, self._song_time() - self.input_latency_s)
+        now = self._judgment_time()
         lane_window = self.space_hit_window if lane == "SPACE" else self.hit_window
         best: NoteEvent | None = None
         best_delta = lane_window + 1.0
@@ -772,6 +775,7 @@ class GameSession:
             return True
         if not self.paused:
             now = self._song_time()
+            judgment_now = max(0.0, now - self.input_latency_s)
             for note in self.analysis.notes:
                 if note.judged:
                     continue
@@ -779,7 +783,7 @@ class GameSession:
                     note.hit_cued = True
                     self.cues.play_lane(note.lane, volume=0.72)
                 miss_window = self.space_hit_window if note.lane == "SPACE" else self.hit_window
-                if now - note.time_s > miss_window:
+                if judgment_now - note.time_s > miss_window:
                     missed_cluster = self._simultaneous_cluster(note)
                     for missed in missed_cluster:
                         missed.judged = True
