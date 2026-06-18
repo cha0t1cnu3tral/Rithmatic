@@ -121,6 +121,64 @@ class PlaybackRateTests(unittest.TestCase):
         self.assertTrue(note.hit)
         self.assertEqual(session.hits, 1)
 
+    def test_rithm_mode_builds_drum_only_timing_chart(self) -> None:
+        session = GameSession.__new__(GameSession)
+        session.analysis = SimpleNamespace(
+            bpm=120.0,
+            notes=[
+                NoteEvent(time_s=0.00, lane="A"),
+                NoteEvent(time_s=0.03, lane="S"),
+                NoteEvent(time_s=0.25, lane="D"),
+                NoteEvent(time_s=0.50, lane="SPACE", is_drum=True),
+            ],
+        )
+        session.difficulty_level = 5
+
+        rhythm_notes = session._rithm_notes_from_analysis()
+
+        self.assertEqual([note.lane for note in rhythm_notes], ["SPACE", "SPACE", "SPACE"])
+        self.assertTrue(all(note.is_drum for note in rhythm_notes))
+        self.assertEqual([round(note.time_s, 2) for note in rhythm_notes], [0.0, 0.25, 0.5])
+
+    def test_rithm_mode_any_key_uses_calibrated_drum_hit(self) -> None:
+        session = GameSession.__new__(GameSession)
+        note = NoteEvent(time_s=1.0, lane="SPACE", is_drum=True)
+        session.analysis = SimpleNamespace(notes=[note])
+        session.game_mode = "rithm"
+        session.keybinds = {
+            "speed_down": "j",
+            "speed_up": "l",
+            "pause": "h",
+        }
+        session.paused = False
+        session.input_cooldown_s = 0.03
+        session.last_key_press_s = {}
+        session.input_latency_s = 0.2
+        session.hit_window = 0.08
+        session.space_hit_window = 0.075
+        session.perfect_window = 0.03
+        session.good_window = 0.06
+        session.score = 0
+        session.hits = 0
+        session.misses = 0
+        session.combo = 0
+        session.max_combo = 0
+        session.perfect_hits = 0
+        session.good_hits = 0
+        session.ok_hits = 0
+        session.health = 100.0
+        session.health_max = 150.0
+        session.fail_hit_recovery = 3.2
+        session.cues = SimpleNamespace(play_hit=lambda lane: None, play_combo=lambda: None)
+        session._song_time = lambda: 1.2
+        session._key_code = lambda action: pygame.key.key_code(session.keybinds[action])
+
+        handled = session.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_q))
+
+        self.assertTrue(handled)
+        self.assertTrue(note.hit)
+        self.assertEqual(session.hits, 1)
+
 
 class PlayerProfileTests(unittest.TestCase):
     def test_latency_calibration_is_clamped_logged_and_persisted(self) -> None:
@@ -133,6 +191,22 @@ class PlayerProfileTests(unittest.TestCase):
 
             self.assertEqual(reloaded.settings()["input_latency_s"], 0.75)
             self.assertEqual(reloaded.data["calibration_history"][-1]["input_latency_ms"], 750)
+
+    def test_game_mode_setting_is_validated_and_persisted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile_path = Path(tmp) / "profile.json"
+            profile = PlayerProfile(profile_path)
+
+            profile.update_settings(game_mode="rithm")
+            reloaded = PlayerProfile(profile_path)
+
+            self.assertEqual(reloaded.settings()["game_mode"], "rithm")
+
+            reloaded.data["settings"]["game_mode"] = "invalid"
+            reloaded.save()
+            normalized = PlayerProfile(profile_path)
+
+            self.assertEqual(normalized.settings()["game_mode"], "chart")
 
     def test_expanded_achievement_catalog_unlocks_new_milestones(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

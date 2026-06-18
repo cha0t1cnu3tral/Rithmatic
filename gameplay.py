@@ -188,6 +188,7 @@ class GameSession:
         speak_letters: bool = True,
         music_enabled: bool = True,
         starting_song_volume: float = 1.0,
+        game_mode: str = "chart",
         reduced_inputs: bool = False,
         difficulty_level: int = 5,
         input_latency_s: float = 0.0,
@@ -205,6 +206,7 @@ class GameSession:
         self.announce_lane = announce_lane or announce
         self.cue_type = cue_type
         self.speak_letters = bool(speak_letters)
+        self.game_mode = game_mode if game_mode in {"chart", "rithm"} else "chart"
         self.reduced_inputs = bool(reduced_inputs)
         self.difficulty_level = max(1, min(10, int(difficulty_level)))
         self.input_latency_s = max(0.0, min(0.75, float(input_latency_s)))
@@ -246,6 +248,7 @@ class GameSession:
         self._apply_difficulty_to_notes()
         self._apply_input_mode_to_notes()
         self.last_press_s = {lane: -9.0 for lane in self.lanes}
+        self.last_key_press_s: dict[int, float] = {}
         self.input_cooldown_s = 0.03
         self.cues = GameplayCueBank(
             self.assets_root,
@@ -280,11 +283,17 @@ class GameSession:
             return pygame.key.key_code(DEFAULT_KEYBINDS[action])
 
     def _lanes_for_mode(self) -> list[str]:
+        if self.game_mode == "rithm":
+            return ["SPACE"]
         if self.reduced_inputs:
             return ["S", "D", "SPACE"]
         return ["A", "S", "D", "F", "SPACE"]
 
     def _lane_colors_for_mode(self) -> dict[str, tuple[int, int, int]]:
+        if self.game_mode == "rithm":
+            return {
+                "SPACE": (235, 235, 235),
+            }
         if self.reduced_inputs:
             return {
                 "S": (130, 230, 160),
@@ -300,6 +309,8 @@ class GameSession:
         }
 
     def _lane_key_map_for_mode(self) -> dict[int, str]:
+        if self.game_mode == "rithm":
+            return {}
         key_a = self._key_code("lane_a")
         key_s = self._key_code("lane_s")
         key_d = self._key_code("lane_d")
@@ -322,6 +333,8 @@ class GameSession:
         }
 
     def _map_lane_for_mode(self, lane: str) -> str:
+        if self.game_mode == "rithm":
+            return "SPACE"
         if not self.reduced_inputs:
             return lane
         if lane in {"A", "S"}:
@@ -331,11 +344,42 @@ class GameSession:
         return "SPACE"
 
     def _apply_input_mode_to_notes(self) -> None:
+        if self.game_mode == "rithm":
+            self.analysis.notes = self._rithm_notes_from_analysis()
+            return
         for note in self.analysis.notes:
             note.lane = self._map_lane_for_mode(note.lane)
             note.hit = False
             note.judged = False
             note.approach_cued = False
+
+    def _rithm_notes_from_analysis(self) -> list[NoteEvent]:
+        beat_s = 60.0 / max(1e-6, self.analysis.bpm)
+        density_scale = 0.28 if self.difficulty_level <= 3 else 0.22 if self.difficulty_level <= 6 else 0.16
+        min_gap_s = float(np.clip(beat_s * density_scale, 0.055, 0.16))
+        source = sorted(self.analysis.notes, key=lambda note: note.time_s)
+        if not source:
+            return []
+
+        rhythm: list[NoteEvent] = []
+        for note in source:
+            candidate = NoteEvent(time_s=float(note.time_s), lane="SPACE", is_drum=bool(note.is_drum))
+            if not rhythm:
+                rhythm.append(candidate)
+                continue
+            gap_s = candidate.time_s - rhythm[-1].time_s
+            if gap_s >= min_gap_s:
+                rhythm.append(candidate)
+                continue
+            if note.is_drum and not rhythm[-1].is_drum:
+                rhythm[-1] = candidate
+
+        for note in rhythm:
+            note.is_drum = True
+            note.hit = False
+            note.judged = False
+            note.approach_cued = False
+        return rhythm
 
     def _difficulty_note_keep_ratio(self) -> float:
         if self.difficulty_level <= 1:
@@ -450,6 +494,8 @@ class GameSession:
         self.announce(f"Speed {self._speed_text()}")
 
     def _spoken_lane_enabled(self) -> bool:
+        if self.game_mode == "rithm":
+            return False
         return self.speak_letters
 
     def _lane_speech_text(self, lane: str) -> str:
@@ -494,7 +540,8 @@ class GameSession:
         self._fallback_song_time_s = 0.0
         self._fallback_last_tick_ms = pygame.time.get_ticks()
         self.announce(
-            f"Song started. Detected type {self.analysis.genre}. "
+            f"Song started. Mode {'Rithm' if self.game_mode == 'rithm' else 'Chart'}. "
+            f"Detected type {self.analysis.genre}. "
             f"Lane profile {self.analysis.lane_profile}. "
             f"Difficulty {self.difficulty_level}. "
             f"Shanra events detected {self.analysis.shanra_hits}."
@@ -731,6 +778,15 @@ class GameSession:
         if self.paused:
             return True
 
+        if self.game_mode == "rithm":
+            now = self._song_time()
+            last_press = self.last_key_press_s.get(event.key, -9.0)
+            if now - last_press < self.input_cooldown_s:
+                return True
+            self.last_key_press_s[event.key] = now
+            self._judge_lane_hit("SPACE")
+            return True
+
         lane = self.lane_key_map.get(event.key)
         if lane is not None:
             now = self._song_time()
@@ -811,7 +867,10 @@ class GameSession:
                 color = (220, 90, 90)
             pygame.draw.circle(self.screen, color, (x, y), 12)
 
-        mode_text = "Reduced Inputs" if self.reduced_inputs else "Full Inputs"
+        if self.game_mode == "rithm":
+            mode_text = "Rithm Mode"
+        else:
+            mode_text = "Reduced Inputs" if self.reduced_inputs else "Full Inputs"
         title = font.render(f"Rithmatic Play ({mode_text})", True, (255, 255, 255))
         self.screen.blit(title, (20, 16))
 

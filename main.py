@@ -44,6 +44,11 @@ CUE_TYPE_LABEL = {
     "audio": "Audio",
     "visual": "Visual",
 }
+GAME_MODE_ORDER = ["chart", "rithm"]
+GAME_MODE_LABEL = {
+    "chart": "Chart",
+    "rithm": "Rithm",
+}
 HELP_OPTIONS = ["Controls Overview", "Sounds Practice", "Start Tutorial", "Back"]
 KEYBIND_ACTIONS = [
     "lane_a",
@@ -442,6 +447,8 @@ class App:
         cue_panning_label = "ON" if self.settings.get("cue_panning", False) else "OFF"
         speak_letters_label = "YES" if self.settings["speak_letters"] else "NO"
         reduced_label = "ON" if self.settings["reduced_inputs"] else "OFF"
+        game_mode = self.settings.get("game_mode", "chart")
+        game_mode_label = GAME_MODE_LABEL.get(game_mode, GAME_MODE_LABEL["chart"])
         difficulty_label = str(
             max(MIN_DIFFICULTY_LEVEL, min(MAX_DIFFICULTY_LEVEL, int(self.settings.get("difficulty_level", 5))))
         )
@@ -458,6 +465,7 @@ class App:
             f"Cue Panning: {cue_panning_label}",
             f"Read Letters: {speak_letters_label}",
             f"Reduced Inputs: {reduced_label}",
+            f"Game Mode: {game_mode_label}",
             f"Difficulty: {difficulty_label}",
             f"Menu Music: {music_label}",
             f"Menu Sounds: {menu_sfx_label}",
@@ -482,16 +490,18 @@ class App:
         if idx == 5:
             return "Reduced Inputs merges A/S and D/F so you only play S, D, and Space."
         if idx == 6:
-            return "Difficulty from 1 to 10. Default is 5. Higher is faster and denser."
+            return "Game Mode chooses normal chart lanes or Rithm mode, where any key plays the drum rhythm."
         if idx == 7:
-            return "Menu music toggle controls only main-menu background tracks."
+            return "Difficulty from 1 to 10. Default is 5. Higher is faster and denser."
         if idx == 8:
-            return "Menu sounds toggle controls selection and song-select sound effects."
+            return "Menu music toggle controls only main-menu background tracks."
         if idx == 9:
-            return "Skips spoken or non-song lead-ins in music videos before gameplay starts."
+            return "Menu sounds toggle controls selection and song-select sound effects."
         if idx == 10:
-            return "Sets the starting speed during song countdown. Left slower, right faster."
+            return "Skips spoken or non-song lead-ins in music videos before gameplay starts."
         if idx == 11:
+            return "Sets the starting speed during song countdown. Left slower, right faster."
+        if idx == 12:
             return "Open per-action key mapping for lanes, pause, and speed controls."
         return "Press Enter or Escape to go back."
 
@@ -513,6 +523,7 @@ class App:
             music_enabled=self.settings["music_enabled"],
             menu_sounds_enabled=self.settings["menu_sounds_enabled"],
             auto_skip_intro=self.settings.get("auto_skip_intro", True),
+            game_mode=self.settings.get("game_mode", "chart"),
             reduced_inputs=self.settings["reduced_inputs"],
             difficulty_level=self.settings["difficulty_level"],
             input_latency_s=self.settings.get("input_latency_s", 0.0),
@@ -721,6 +732,7 @@ class App:
                 speak_letters=self.settings["speak_letters"],
                 music_enabled=True,
                 starting_song_volume=self.settings.get("default_song_volume", 0.5),
+                game_mode=self.settings.get("game_mode", "chart"),
                 reduced_inputs=self.settings["reduced_inputs"],
                 difficulty_level=self.settings["difficulty_level"],
                 input_latency_s=self.settings.get("input_latency_s", 0.0),
@@ -1063,6 +1075,7 @@ class App:
                 "Down arrow lowers song volume, up arrow raises song volume. "
                 "Left bracket lowers cue volume, right bracket raises cue volume. "
                 "Reduced Inputs merges to S, D, and Space. "
+                "Rithm mode lets any key play to the drum rhythm. "
                 "Songs screen supports refresh with R and cache cleanup with C."
             )
             return
@@ -1215,6 +1228,21 @@ class App:
             self._speak(self.settings_menu.selected)
             return
         if idx == 6:
+            current = self.settings.get("game_mode", "chart")
+            if current not in GAME_MODE_ORDER:
+                current = "chart"
+            current_idx = GAME_MODE_ORDER.index(current)
+            if event.key == pygame.K_LEFT:
+                next_idx = (current_idx - 1) % len(GAME_MODE_ORDER)
+            else:
+                next_idx = (current_idx + 1) % len(GAME_MODE_ORDER)
+            self.settings["game_mode"] = GAME_MODE_ORDER[next_idx]
+            self._save_settings()
+            self.audio.play_item_selected()
+            self._speak(f"Game mode {GAME_MODE_LABEL[self.settings['game_mode']]}")
+            self._speak(self.settings_menu.selected)
+            return
+        if idx == 7:
             previous = int(self.settings.get("difficulty_level", 5))
             if event.key == pygame.K_LEFT:
                 updated = max(MIN_DIFFICULTY_LEVEL, previous - 1)
@@ -1230,7 +1258,7 @@ class App:
             self._speak(f"Difficulty {updated}")
             self._speak(self.settings_menu.selected)
             return
-        if idx == 7:
+        if idx == 8:
             if event.key == pygame.K_LEFT:
                 self.settings["music_enabled"] = False
             elif event.key == pygame.K_RIGHT:
@@ -1242,7 +1270,7 @@ class App:
             self._speak("Menu music on" if self.settings["music_enabled"] else "Menu music off")
             self._speak(self.settings_menu.selected)
             return
-        if idx == 8:
+        if idx == 9:
             if event.key == pygame.K_LEFT:
                 self.settings["menu_sounds_enabled"] = False
             elif event.key == pygame.K_RIGHT:
@@ -1256,7 +1284,7 @@ class App:
             )
             self._speak(self.settings_menu.selected)
             return
-        if idx == 9:
+        if idx == 10:
             if event.key == pygame.K_LEFT:
                 self.settings["auto_skip_intro"] = False
             elif event.key == pygame.K_RIGHT:
@@ -1272,7 +1300,7 @@ class App:
             )
             self._speak(self.settings_menu.selected)
             return
-        if idx == 10:
+        if idx == 11:
             speed_steps = self._song_speed_steps()
             previous = self._default_song_speed_index()
             if event.key == pygame.K_LEFT:
@@ -1287,14 +1315,14 @@ class App:
             self._speak(f"Default start speed {speed_steps[updated]:.2f}x")
             self._speak(self.settings_menu.selected)
             return
-        if idx == 11:
+        if idx == 12:
             self.state = "KEYBINDS"
             self.waiting_for_keybind_action = None
             self.keybind_menu.options = self._keybind_options()
             self._speak("Keybind settings")
             self._speak(self.keybind_menu.selected)
             return
-        if idx == 12:
+        if idx == 13:
             self.state = "MENU"
             self.audio.start_menu_music()
             self._speak("Main menu")
@@ -1427,6 +1455,7 @@ class App:
                 f"{self._display_key_name(keybinds['pause'])} pause, up/down song volume, [ ] cue volume."
             ),
             "Reduced Inputs mode merges pitched lanes to S/D plus drum lane.",
+            "Rithm mode uses any key against a drum-only rhythm chart.",
             "Misses lower health; if health hits zero, the song fails.",
             "Pick Sounds Practice for cue rehearsal.",
             "Controller support: D-pad navigate, A select, B back, shoulder buttons speed.",

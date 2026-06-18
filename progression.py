@@ -14,6 +14,7 @@ DEFAULT_SETTINGS = {
     "music_enabled": True,
     "menu_sounds_enabled": True,
     "auto_skip_intro": True,
+    "game_mode": "chart",
     "reduced_inputs": False,
     "difficulty_level": 5,
     "input_latency_s": 0.0,
@@ -31,6 +32,7 @@ DEFAULT_SETTINGS = {
 }
 
 VALID_CUE_TYPES = {"both", "audio", "visual"}
+VALID_GAME_MODES = {"chart", "rithm"}
 MIN_CUE_VOLUME = 0.0
 MAX_CUE_VOLUME = 2.5
 MIN_SONG_VOLUME = 0.0
@@ -142,6 +144,8 @@ class PlayerProfile:
             normalized["music_enabled"] = bool(normalized.get("music_enabled", True))
             normalized["menu_sounds_enabled"] = bool(normalized.get("menu_sounds_enabled", True))
             normalized["auto_skip_intro"] = bool(normalized.get("auto_skip_intro", True))
+            if normalized.get("game_mode") not in VALID_GAME_MODES:
+                normalized["game_mode"] = DEFAULT_SETTINGS["game_mode"]
             normalized["reduced_inputs"] = bool(normalized.get("reduced_inputs", False))
             normalized["difficulty_level"] = max(
                 MIN_DIFFICULTY_LEVEL,
@@ -440,6 +444,8 @@ class PlayerProfile:
         normalized["music_enabled"] = bool(normalized.get("music_enabled", True))
         normalized["menu_sounds_enabled"] = bool(normalized.get("menu_sounds_enabled", True))
         normalized["auto_skip_intro"] = bool(normalized.get("auto_skip_intro", True))
+        if normalized.get("game_mode") not in VALID_GAME_MODES:
+            normalized["game_mode"] = DEFAULT_SETTINGS["game_mode"]
         normalized["reduced_inputs"] = bool(normalized.get("reduced_inputs", False))
         normalized["difficulty_level"] = max(
             MIN_DIFFICULTY_LEVEL,
@@ -469,6 +475,7 @@ class PlayerProfile:
         music_enabled: bool | None = None,
         menu_sounds_enabled: bool | None = None,
         auto_skip_intro: bool | None = None,
+        game_mode: str | None = None,
         reduced_inputs: bool | None = None,
         difficulty_level: int | None = None,
         input_latency_s: float | None = None,
@@ -492,6 +499,8 @@ class PlayerProfile:
             settings["menu_sounds_enabled"] = bool(menu_sounds_enabled)
         if auto_skip_intro is not None:
             settings["auto_skip_intro"] = bool(auto_skip_intro)
+        if game_mode is not None and game_mode in VALID_GAME_MODES:
+            settings["game_mode"] = game_mode
         if reduced_inputs is not None:
             settings["reduced_inputs"] = bool(reduced_inputs)
         if difficulty_level is not None:
